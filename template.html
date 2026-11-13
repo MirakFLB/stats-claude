@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stats Claude</title>
+<style>
+  :root {
+    --bg: #171717; --card: #212121; --tile: #303030; --pill: #3a3a3a;
+    --text: #f4f4f4; --muted: #a1a1a1; --dim: #2c2c2c; --spark: #d97757;
+    --h1: #9aaced; --h2: #7d93e3; --h3: #5f79da; --h4: #4161d2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 16px; }
+  h1 { display: flex; align-items: center; gap: 14px; margin: 0 0 56px;
+    font-weight: 400; font-size: 34px; letter-spacing: -.01em; }
+  h1 svg { width: 38px; height: 38px; flex: none; }
+  .card { background: var(--card); border-radius: 16px; padding: 22px 22px 20px; }
+  .bar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 34px; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { background: none; border: 0; color: var(--muted); font: inherit; font-size: 17px;
+    padding: 6px 12px; border-radius: 9px; cursor: pointer; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button.on { background: var(--tile); color: var(--text); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tile { background: var(--tile); border-radius: 9px; padding: 10px 12px 12px; min-width: 0; }
+  .tile .k { color: var(--muted); font-size: 17px; }
+  .tile .v { font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .v.model { font-weight: 400; }
+  .heat { display: grid; grid-template-rows: repeat(7, auto); grid-auto-flow: column;
+    grid-auto-columns: 1fr; gap: 6px; margin-top: 12px; }
+  .heat i { aspect-ratio: 1; border-radius: 4px; background: var(--dim); transition: opacity .15s; }
+  .heat i.l1 { background: var(--h1); } .heat i.l2 { background: var(--h2); }
+  .heat i.l3 { background: var(--h3); } .heat i.l4 { background: var(--h4); }
+  .heat i.out { opacity: .25; }
+  .foot { color: var(--muted); margin: 22px 0 0; font-size: 16px; }
+  .models { display: grid; gap: 8px; }
+  .row { background: var(--tile); border-radius: 9px; padding: 12px; }
+  .row .top { display: flex; justify-content: space-between; gap: 12px; }
+  .row .n { font-weight: 600; }
+  .row .t { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row .track { height: 6px; border-radius: 3px; background: var(--dim); margin-top: 10px; overflow: hidden; }
+  .row .fill { height: 100%; background: var(--h3); border-radius: 3px; }
+  .empty { color: var(--muted); padding: 24px 0; }
+  .stamp { color: #6b6b6b; font-size: 13px; text-align: right; margin-top: 12px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 620px) {
+    h1 { font-size: 26px; margin-bottom: 32px; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .tabs button { font-size: 15px; padding: 5px 9px; }
+    .heat { gap: 3px; } .heat i { border-radius: 2px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>
+    <svg viewBox="0 0 40 40" aria-hidden="true"><g fill="var(--spark)" transform="translate(20 20)">
+      <path id="ray" d="M-1.6 -3 L0 -19 L1.6 -3 Z"/>
+      <use href="#ray" transform="rotate(40)"/><use href="#ray" transform="rotate(80)"/>
+      <use href="#ray" transform="rotate(120)"/><use href="#ray" transform="rotate(160)"/>
+      <use href="#ray" transform="rotate(200)"/><use href="#ray" transform="rotate(240)"/>
+      <use href="#ray" transform="rotate(280)"/><use href="#ray" transform="rotate(320)"/>
+      <circle r="3.4"/></g></svg>
+    <span id="hello"></span>
+  </h1>
+  <section class="card">
+    <div class="bar">
+      <div class="tabs" id="view">
+        <button data-v="overview" class="on">Aperçu</button>
+        <button data-v="models">Modèles</button>
+      </div>
+      <div class="tabs" id="range">
+        <button data-r="all" class="on">Tout</button>
+        <button data-r="d30">30 j</button>
+        <button data-r="d7">7 j</button>
+      </div>
+    </div>
+    <div id="overview">
+      <div class="grid" id="tiles"></div>
+      <div class="heat" id="heat"></div>
+      <p class="foot" id="foot"></p>
+    </div>
+    <div id="models" class="models" hidden></div>
+  </section>
+  <p class="stamp" id="stamp"></p>
+</main>
+<script>
+const D = /*DATA*/null;
+const HOBBIT = 123000; // tokens in The Hobbit
+const nf = new Intl.NumberFormat('fr-FR');
+const state = { view: 'overview', range: 'all' };
+
+function compact(n) {
+  for (const [v, s] of [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']])
+    if (n >= v) return (n / v).toFixed(1).replace(/\.0$/, '') + s;
+  return String(n);
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const dkey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+document.getElementById('hello').textContent = `Et ensuite, ${D.user} ?`;
+document.getElementById('stamp').textContent = 'Mis à jour le ' +
+  new Date(D.generatedAt).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }) +
+  ' · rouvre l’app pour actualiser';
+
+// Heatmap: one column per week (Mon→Sun), from the first active week to today, 26 to 52 weeks.
+const heat = document.getElementById('heat');
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const weeksAgo = n => { const d = new Date(today); d.setDate(d.getDate() - 7 * n); return d; };
+const firstKey = Object.keys(D.days).sort()[0];
+let start = firstKey ? new Date(firstKey + 'T00:00:00') : today;
+if (start > weeksAgo(25)) start = weeksAgo(25);
+if (start < weeksAgo(52)) start = weeksAgo(52);
+start = new Date(start);
+start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+const max = Math.max(1, ...Object.values(D.days));
+const cells = [];
+for (const d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+  const k = dkey(d), v = D.days[k] || 0;
+  const i = document.createElement('i');
+  if (v) i.className = 'l' + Math.min(4, Math.ceil((v / max) * 4));
+  i.title = d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) +
+    ' — ' + nf.format(v) + ' messages';
+  i.dataset.k = k;
+  heat.appendChild(i);
+  cells.push(i);
+}
+
+function render() {
+  const r = D.ranges[state.range];
+  document.getElementById('tiles').innerHTML = [
+    ['Sessions', nf.format(r.sessions)],
+    ['Messages', nf.format(r.messages)],
+    ['Tokens au total', compact(r.tokens)],
+    ['Jours actifs', nf.format(r.activeDays)],
+    ['Heure de pointe', r.peakHour == null ? '—' : r.peakHour + ' h'],
+    ['Modèle préféré', r.favModel, 'model'],
+  ].map(([k, v, c]) => `<div class="tile"><div class="k">${k}</div><div class="v ${c || ''}">${esc(v)}</div></div>`).join('');
+
+  const inRange = state.range === 'all' ? null : new Set(state.range === 'd30' ? D.range30 : D.range7);
+  cells.forEach(c => c.classList.toggle('out', !!inRange && !inRange.has(c.dataset.k)));
+
+  const x = r.tokens / HOBBIT;
+  document.getElementById('foot').textContent = !r.tokens ? 'Aucun token sur cette période.' : x >= 1
+    ? `Vous avez utilisé environ ${nf.format(Math.round(x))}× plus de tokens que le livre « The Hobbit ».`
+    : `Vous avez utilisé environ ${Math.round(x * 100)} % des tokens du livre « The Hobbit ».`;
+
+  document.getElementById('models').innerHTML = r.models.length ? r.models.map(m => {
+    const pct = (m.tokens / r.tokens) * 100;
+    return `<div class="row"><div class="top"><span class="n">${esc(m.name)}</span>
+      <span class="t">${compact(m.tokens)} tokens · ${nf.format(m.messages)} réponses · ${pct < 0.1 ? '<0,1' : nf.format(+pct.toFixed(1))} %</span></div>
+      <div class="track"><div class="fill" style="width:${Math.max(pct, 0.5)}%"></div></div></div>`;
+  }).join('') : '<div class="empty">Aucune activité sur cette période.</div>';
+
+  document.getElementById('overview').hidden = state.view !== 'overview';
+  document.getElementById('models').hidden = state.view !== 'models';
+}
+
+for (const [id, key, attr] of [['view', 'view', 'v'], ['range', 'range', 'r']]) {
+  document.getElementById(id).addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    state[key] = b.dataset[attr];
+    document.querySelectorAll(`#${id} button`).forEach(x => x.classList.toggle('on', x === b));
+    render();
+  });
+}
+render();
+</script>
+</body>
+</html>
